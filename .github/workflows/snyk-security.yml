@@ -13,88 +13,152 @@ env:
   SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
 
 jobs:
-  ##########################################################################
-  # SNYK OPEN SOURCE (SCA)
-  ##########################################################################
+
+##########################################################################
+# SNYK OPEN SOURCE (SCA)
+##########################################################################
 
   snyk-open-source:
     name: Snyk Open Source
     runs-on: ubuntu-latest
 
     steps:
+
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
 
-      - name: Install dependencies
+      - name: Check dependency files
+        id: deps
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if find . -type f \( \
+            -name "requirements.txt" \
+            -o -name "package.json" \
+            -o -name "pom.xml" \
+            -o -name "build.gradle" \
+            -o -name "go.mod" \
+          \) | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
 
       - name: Install Snyk CLI
+        if: steps.deps.outputs.exists == 'true'
         run: npm install -g snyk
 
+
       - name: Authenticate
+        if: steps.deps.outputs.exists == 'true'
         run: snyk auth $SNYK_TOKEN
 
+
       - name: Scan Open Source Dependencies
+        if: steps.deps.outputs.exists == 'true'
         run: |
           snyk test \
             --all-projects \
             --severity-threshold=high
 
-  ##########################################################################
-  # SNYK CODE (SAST)
-  ##########################################################################
+
+      - name: No dependency files
+        if: steps.deps.outputs.exists == 'false'
+        run: |
+          echo "No supported dependency files found. Skipping SCA scan."
+
+
+##########################################################################
+# SNYK CODE (SAST)
+##########################################################################
 
   snyk-code:
     name: Snyk Code
     runs-on: ubuntu-latest
 
     steps:
+
       - uses: actions/checkout@v4
 
-      - run: npm install -g snyk
 
-      - run: snyk auth $SNYK_TOKEN
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+
+
+      - name: Authenticate
+        run: snyk auth $SNYK_TOKEN
+
 
       - name: Scan Source Code
         run: |
           snyk code test \
             --severity-threshold=high
 
-  ##########################################################################
-  # SNYK IaC
-  ##########################################################################
+
+##########################################################################
+# SNYK IaC
+##########################################################################
 
   snyk-iac:
     name: Snyk IaC
     runs-on: ubuntu-latest
 
     steps:
+
       - uses: actions/checkout@v4
 
-      - run: npm install -g snyk
 
-      - run: snyk auth $SNYK_TOKEN
+      - name: Check IaC files
+        id: iac
+        shell: bash
+        run: |
+          if find . -type f \( \
+            -name "*.tf" \
+            -o -name "*.yaml" \
+            -o -name "*.yml" \
+            -o -name "*.json" \
+          \) | grep -q .; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+
+      - name: Install Snyk CLI
+        if: steps.iac.outputs.exists == 'true'
+        run: npm install -g snyk
+
+
+      - name: Authenticate
+        if: steps.iac.outputs.exists == 'true'
+        run: snyk auth $SNYK_TOKEN
+
 
       - name: Scan Infrastructure
+        if: steps.iac.outputs.exists == 'true'
         run: |
           snyk iac test . \
             --severity-threshold=high
 
-  ##########################################################################
-  # SNYK CONTAINER
-  ##########################################################################
+
+      - name: No IaC files
+        if: steps.iac.outputs.exists == 'false'
+        run: |
+          echo "No IaC files found. Skipping IaC scan."
+
+
+##########################################################################
+# SNYK CONTAINER
+##########################################################################
 
   snyk-container:
     name: Snyk Container
     runs-on: ubuntu-latest
 
     steps:
+
       - uses: actions/checkout@v4
+
 
       - name: Check for Dockerfile
         id: docker
@@ -106,18 +170,22 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+
       - name: Install Snyk CLI
         if: steps.docker.outputs.exists == 'true'
         run: npm install -g snyk
+
 
       - name: Authenticate
         if: steps.docker.outputs.exists == 'true'
         run: snyk auth $SNYK_TOKEN
 
+
       - name: Build Docker Image
         if: steps.docker.outputs.exists == 'true'
         run: |
           docker build -t vulnerable-app .
+
 
       - name: Scan Container
         if: steps.docker.outputs.exists == 'true'
@@ -125,15 +193,19 @@ jobs:
           snyk container test vulnerable-app \
             --severity-threshold=high
 
+
       - name: No Dockerfile
         if: steps.docker.outputs.exists == 'false'
-        run: echo "No Dockerfile found. Skipping container scan."
+        run: |
+          echo "No Dockerfile found. Skipping container scan."
 
-  ##########################################################################
-  # SECURITY GATE
-  ##########################################################################
+
+##########################################################################
+# SECURITY GATE
+##########################################################################
 
   security-gate:
+
     name: Security Gate
 
     runs-on: ubuntu-latest
@@ -146,7 +218,10 @@ jobs:
       - snyk-iac
       - snyk-container
 
+
     steps:
+
+
       - name: Print Results
         run: |
           echo "Open Source : ${{ needs.snyk-open-source.result }}"
@@ -154,24 +229,43 @@ jobs:
           echo "IaC         : ${{ needs.snyk-iac.result }}"
           echo "Container   : ${{ needs.snyk-container.result }}"
 
-      - name: Fail if any scan failed
+
+      - name: Fail if security scan failed
         shell: bash
         run: |
+
           failed=0
 
-          [[ "${{ needs.snyk-open-source.result }}" == "success" ]] || failed=1
-          [[ "${{ needs.snyk-code.result }}" == "success" ]] || failed=1
-          [[ "${{ needs.snyk-iac.result }}" == "success" ]] || failed=1
 
-          # Container may be skipped if no Dockerfile exists
+          # SCA
+          if [[ "${{ needs.snyk-open-source.result }}" != "success" ]]; then
+            failed=1
+          fi
+
+
+          # SAST
+          if [[ "${{ needs.snyk-code.result }}" != "success" ]]; then
+            failed=1
+          fi
+
+
+          # IaC
+          if [[ "${{ needs.snyk-iac.result }}" != "success" ]]; then
+            failed=1
+          fi
+
+
+          # Container
           if [[ "${{ needs.snyk-container.result }}" != "success" && \
                 "${{ needs.snyk-container.result }}" != "skipped" ]]; then
             failed=1
           fi
 
+
           if [[ $failed -eq 1 ]]; then
-            echo "❌ One or more Snyk scans failed."
+            echo "❌ Security checks failed."
             exit 1
           fi
 
-          echo "✅ All Snyk scans passed."
+
+          echo "✅ All applicable Snyk security checks passed."

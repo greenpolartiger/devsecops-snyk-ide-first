@@ -112,15 +112,22 @@ jobs:
         id: iac
         shell: bash
         run: |
-          if find . -type f \( \
-            -name "*.tf" \
-            -o -name "*.yaml" \
-            -o -name "*.yml" \
-            -o -name "*.json" \
-          \) | grep -q .; then
+          if find . \
+            -not -path "./.github/*" \
+            -type f \( \
+              -name "*.tf" \
+              -o -name "*.tf.json" \
+              -o -name "k8s*.yaml" \
+              -o -name "*deployment*.yaml" \
+              -o -name "*terraform*.json" \
+            \) | grep -q .; then
+      
             echo "exists=true" >> "$GITHUB_OUTPUT"
+      
           else
+      
             echo "exists=false" >> "$GITHUB_OUTPUT"
+      
           fi
 
 

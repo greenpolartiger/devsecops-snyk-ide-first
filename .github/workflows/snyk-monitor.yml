@@ -1,0 +1,46 @@
+name: Snyk Monitor
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+env:
+  SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+jobs:
+
+  snyk-monitor:
+
+    name: Snyk Dependency Monitoring
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Snyk CLI
+        run: npm install -g snyk
+
+      - name: Authenticate Snyk
+        run: snyk auth $SNYK_TOKEN
+
+      - name: Create Snyk Monitoring Snapshot
+        run: |
+          snyk monitor \
+            --all-projects \
+            --org=greenpolartigerr  
